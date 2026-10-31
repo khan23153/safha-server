@@ -2,7 +2,7 @@
 # Oracle has capacity (Mumbai often answers "Out of host capacity"). Once the
 # server exists it opens an issue with the IP and disables itself.
 # Secrets: OCI_USER_OCID, OCI_TENANCY_OCID, OCI_FINGERPRINT, OCI_PRIVATE_KEY,
-# OCI_SSH_PUBLIC_KEY, optional KAGGLE_API_TOKEN.
+# OCI_SSH_PUBLIC_KEY, optional KAGGLE_API_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
 name: Grab Oracle A1 server
 
 on:
@@ -40,6 +40,7 @@ jobs:
           OCI_SSH_PUBLIC_KEY: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
           OCI_REGION: ap-mumbai-1
+          ATTEMPTS: "1"
         run: python launch_a1.py
       - name: Announce the server and stop retrying
         if: steps.grab.outputs.status == 'created' || steps.grab.outputs.status == 'exists'
@@ -57,6 +58,16 @@ jobs:
           - Next: \`CLOUDFLARE_TUNNEL_TOKEN=... /opt/safha-server/deploy.sh\`."
           fi
           gh workflow disable grab-a1.yml
+      - name: Telegram update
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STATUS: ${{ steps.grab.outputs.status || 'error' }}
+          PUBLIC_IP: ${{ steps.grab.outputs.public_ip }}
+          ATTEMPTS: ${{ steps.grab.outputs.attempts }}
+          ERROR: ${{ steps.grab.outputs.error }}
+        run: python notify_telegram.py
       - name: Summary
         if: always()
         run: echo "status=${{ steps.grab.outputs.status }} ip=${{ steps.grab.outputs.public_ip }}" >> "$GITHUB_STEP_SUMMARY"

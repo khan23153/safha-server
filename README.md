@@ -17,7 +17,8 @@ This repo keeps trying automatically, then sets the server up.
 1. Oracle console → profile → **My profile → API keys → Add API key** → generate, download the private key, **Add**.
 2. Repo **Settings → Secrets and variables → Actions**, add:
    `OCI_USER_OCID`, `OCI_TENANCY_OCID`, `OCI_FINGERPRINT`, `OCI_PRIVATE_KEY` (the .pem content),
-   `OCI_SSH_PUBLIC_KEY`, and optionally `KAGGLE_API_TOKEN`.
+   `OCI_SSH_PUBLIC_KEY`, and optionally `KAGGLE_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
+   (Telegram: a silent message after every attempt, a ringing one when the server is created or a run fails).
 3. Wait for the "Oracle A1 server ready" issue. Then on the server:
    `CLOUDFLARE_TUNNEL_TOKEN=... /opt/safha-server/deploy.sh`
 
