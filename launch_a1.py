@@ -154,10 +154,26 @@ def public_ip(compute, vnet, compartment, instance_id) -> str:
 
 
 def main() -> None:
+    """Try up to ATTEMPTS times, ATTEMPT_GAP_S apart; stop as soon as the server exists."""
     if not os.environ.get("OCI_USER_OCID"):
         print("Oracle secrets are not set yet; nothing to do.")
-        output(status="not_configured", public_ip="")
+        output(status="not_configured", public_ip="", attempts="0")
         return
+    attempts = max(1, int(os.environ.get("ATTEMPTS") or 1))
+    gap = float(os.environ.get("ATTEMPT_GAP_S") or 150)
+    status, ip = "no_capacity", ""
+    for n in range(1, attempts + 1):
+        status, ip = attempt()
+        print(f"attempt {n}/{attempts}: {status}")
+        if status != "no_capacity":
+            break
+        if n < attempts:
+            time.sleep(gap)
+    output(status=status, public_ip=ip, attempts=str(n))
+
+
+def attempt() -> tuple[str, str]:
+    """One try. Returns (status, public_ip)."""
     cfg = config()
     compartment = cfg["tenancy"]
     compute = oci.core.ComputeClient(cfg)
@@ -166,8 +182,7 @@ def main() -> None:
 
     found = existing_instance(compute, compartment)
     if found:
-        output(status="exists", public_ip=public_ip(compute, vnet, compartment, found.id))
-        return
+        return "exists", public_ip(compute, vnet, compartment, found.id)
 
     subnet_id = ensure_network(vnet, compartment)
     image_id = ubuntu_image(compute, compartment)
@@ -198,9 +213,8 @@ def main() -> None:
         print("launched", inst.id, "in", ad.name)
         oci.wait_until(compute, compute.get_instance(inst.id), "lifecycle_state", "RUNNING",
                        max_wait_seconds=900)
-        output(status="created", public_ip=public_ip(compute, vnet, compartment, inst.id))
-        return
-    output(status="no_capacity", public_ip="")
+        return "created", public_ip(compute, vnet, compartment, inst.id)
+    return "no_capacity", ""
 
 
 def annotate(err: BaseException) -> None:
@@ -211,6 +225,7 @@ def annotate(err: BaseException) -> None:
         text = f"{type(err).__name__}: {err}"
     text = text.replace("\n", " ")[:900]
     print(f"::error title=Oracle A1 grab failed::{text}", flush=True)
+    output(status="error", public_ip="", error=text.replace("=", ":"))
 
 
 if __name__ == "__main__":

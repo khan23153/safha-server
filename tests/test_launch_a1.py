@@ -80,7 +80,9 @@ def setup(monkeypatch, tmp_path):
     def run(compute):
         monkeypatch.setattr(grab.oci.core, "ComputeClient", lambda cfg: compute)
         grab.main()
-        return dict(line.split("=", 1) for line in out.read_text().split())
+        result = dict(line.split("=", 1) for line in out.read_text().split())
+        result.pop("attempts", None)
+        return result
     return run
 
 
@@ -117,6 +119,13 @@ def test_missing_secrets_do_nothing(monkeypatch, tmp_path):
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
     grab.main()
     assert "status=not_configured" in out.read_text()
+
+
+def test_several_attempts_per_run_stop_at_success(setup, monkeypatch):
+    monkeypatch.setenv("ATTEMPTS", "3")
+    compute = FakeCompute(errors=[Err(500, "Out of host capacity.")])
+    assert setup(compute)["status"] == "created"
+    assert len(compute.launched) == 1
 
 
 def test_oracle_label_after_the_key_is_ignored():
