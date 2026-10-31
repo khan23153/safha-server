@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import urllib.parse
 import urllib.request
 
@@ -38,11 +37,11 @@ def find_chat(token: str) -> str:
     return ""
 
 
-def message() -> tuple[str, bool]:
-    """(text, silent) for the run's outcome."""
-    status = os.environ.get("STATUS") or "error"
-    ip = os.environ.get("PUBLIC_IP", "")
-    attempts = os.environ.get("ATTEMPTS") or "?"
+def message(status=None, ip=None, attempts=None, error=None) -> tuple[str, bool]:
+    """(text, silent) for an outcome; arguments default to the STATUS/... env."""
+    status = status or os.environ.get("STATUS") or "error"
+    ip = os.environ.get("PUBLIC_IP", "") if ip is None else ip
+    attempts = attempts or os.environ.get("ATTEMPTS") or "?"
     run = os.environ.get("GITHUB_RUN_NUMBER", "?")
     link = "{}/{}/actions/runs/{}".format(
         os.environ.get("GITHUB_SERVER_URL", "https://github.com"),
@@ -54,20 +53,21 @@ def message() -> tuple[str, bool]:
     if status == "exists":
         return f"ℹ️ Safha server pehle se bana hua hai. IP: {ip}", True
     if status == "no_capacity":
-        return (f"⏳ Run #{run}: Mumbai mein capacity nahi mili "
-                f"({attempts} koshish). Agli koshish ~2-3 min mein.", True)
+        return (f"⏳ Koshish #{attempts} (run #{run}): Mumbai mein capacity nahi mili. "
+                "Agli koshish ~5 min mein.", True)
     if status == "not_configured":
         return "", True
-    error = os.environ.get("ERROR") or "unknown error"
+    error = error or os.environ.get("ERROR") or "unknown error"
     return f"❌ Run #{run} fail hua: {error}\n{link}", False
 
 
-def main() -> None:
+def send(status=None, ip=None, attempts=None, error=None) -> None:
+    """Send one update; never raises."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
         print("No TELEGRAM_BOT_TOKEN; skipping Telegram.")
         return
-    text, silent = message()
+    text, silent = message(status, ip, attempts, error)
     if not text:
         return
     chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip() or find_chat(token)
@@ -80,7 +80,10 @@ def main() -> None:
              disable_web_page_preview="true")
     except Exception as err:  # a notification must never fail the grab
         print(f"::warning title=Telegram send failed::{type(err).__name__}")
-        sys.exit(0)
+
+
+def main() -> None:
+    send()
 
 
 if __name__ == "__main__":

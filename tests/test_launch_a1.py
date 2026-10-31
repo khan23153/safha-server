@@ -132,3 +132,15 @@ def test_oracle_label_after_the_key_is_ignored():
     key = "-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----\nOCI_API_KEY\n"
     assert grab.pem_only(key) == "-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----\n"
     assert grab.pem_only("  " + key.replace("\n", "\\n")).startswith("-----BEGIN PRIVATE KEY-----\nABC")
+
+
+def test_a_transient_error_does_not_end_a_long_loop(setup, monkeypatch):
+    monkeypatch.setenv("ATTEMPTS", "3")
+    compute = FakeCompute(errors=[Err(502, "Bad Gateway"), Err(500, "Out of host capacity.")])
+    assert setup(compute)["status"] == "created"
+
+
+def test_three_errors_in_a_row_stop_the_loop(setup, monkeypatch):
+    monkeypatch.setenv("ATTEMPTS", "5")
+    with pytest.raises(oci.exceptions.ServiceError):
+        setup(FakeCompute(errors=[Err(401, "NotAuthenticated")] * 3))

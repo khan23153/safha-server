@@ -160,16 +160,40 @@ def main() -> None:
         output(status="not_configured", public_ip="", attempts="0")
         return
     attempts = max(1, int(os.environ.get("ATTEMPTS") or 1))
-    gap = float(os.environ.get("ATTEMPT_GAP_S") or 150)
-    status, ip = "no_capacity", ""
+    gap = float(os.environ.get("ATTEMPT_GAP_S") or 300)
+    first = int(os.environ.get("ATTEMPT_OFFSET") or 0)
+    status, ip, errors = "no_capacity", "", 0
     for n in range(1, attempts + 1):
-        status, ip = attempt()
-        print(f"attempt {n}/{attempts}: {status}")
-        if status != "no_capacity":
-            break
+        try:
+            status, ip = attempt()
+            errors = 0
+        except Exception as err:  # noqa: BLE001 - keep a long loop alive
+            errors += 1
+            text = describe(err)
+            print(f"::warning title=Attempt {n} failed::{text}", flush=True)
+            notify("error", "", first + n, text)
+            if errors >= min(3, attempts):
+                raise
+            status = "no_capacity"
+        else:
+            print(f"attempt {n}/{attempts}: {status}", flush=True)
+            notify(status, ip, first + n)
+            if status != "no_capacity":
+                break
         if n < attempts:
             time.sleep(gap)
-    output(status=status, public_ip=ip, attempts=str(n))
+    output(status=status, public_ip=ip, attempts=str(first + n))
+
+
+def notify(status, ip, number, error=None) -> None:
+    """Per-attempt Telegram update (silent unless created/error)."""
+    if os.environ.get("NOTIFY_EACH") != "1":
+        return
+    try:
+        import notify_telegram
+        notify_telegram.send(status, ip, str(number), error)
+    except Exception as err:  # noqa: BLE001 - notifications are best effort
+        print(f"::warning title=Telegram::{type(err).__name__}")
 
 
 def attempt() -> tuple[str, str]:
@@ -217,13 +241,17 @@ def attempt() -> tuple[str, str]:
     return "no_capacity", ""
 
 
-def annotate(err: BaseException) -> None:
-    """Surface a readable cause as a GitHub annotation (never secrets)."""
+def describe(err: BaseException) -> str:
     if isinstance(err, oci.exceptions.ServiceError):
         text = f"Oracle API {err.status} {err.code}: {err.message}"
     else:
         text = f"{type(err).__name__}: {err}"
-    text = text.replace("\n", " ")[:900]
+    return text.replace("\n", " ")[:900]
+
+
+def annotate(err: BaseException) -> None:
+    """Surface a readable cause as a GitHub annotation (never secrets)."""
+    text = describe(err)
     print(f"::error title=Oracle A1 grab failed::{text}", flush=True)
     output(status="error", public_ip="", error=text.replace("=", ":"))
 

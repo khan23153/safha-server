@@ -10,6 +10,10 @@ on:
     # Offset from :00, when GitHub delays or drops many scheduled runs.
     - cron: "2-59/5 * * * *"
   workflow_dispatch:
+    inputs:
+      loop_attempts:
+        description: "Attempts in this run, 5 minutes apart (60 = about 5 hours); then the run starts the next one"
+        default: "60"
 
 permissions:
   actions: write
@@ -23,7 +27,7 @@ concurrency:
 jobs:
   grab:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,7 +45,11 @@ jobs:
           OCI_SSH_PUBLIC_KEY: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
           OCI_REGION: ap-mumbai-1
-          ATTEMPTS: "1"
+          ATTEMPTS: ${{ github.event_name == 'workflow_dispatch' && (inputs.loop_attempts || '60') || '1' }}
+          ATTEMPT_GAP_S: "300"
+          NOTIFY_EACH: "1"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python launch_a1.py
       - name: Announce the server and stop retrying
         if: steps.grab.outputs.status == 'created' || steps.grab.outputs.status == 'exists'
@@ -59,8 +67,15 @@ jobs:
           - Next: \`CLOUDFLARE_TUNNEL_TOKEN=... /opt/safha-server/deploy.sh\`."
           fi
           gh workflow disable grab-a1.yml
-      - name: Telegram update
-        if: always()
+      # The loop does not depend on GitHub's (unreliable) schedule: a manual
+      # run keeps trying for ~5 hours, then starts its successor.
+      - name: Keep trying in a new run
+        if: github.event_name == 'workflow_dispatch' && steps.grab.outputs.status == 'no_capacity'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run grab-a1.yml -f loop_attempts=${{ inputs.loop_attempts || '60' }}
+      - name: Telegram update on failure
+        if: failure()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

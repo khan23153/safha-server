@@ -9,6 +9,7 @@ def test_no_capacity_is_silent(monkeypatch):
     monkeypatch.setenv("STATUS", "no_capacity")
     text, silent = tg.message()
     assert "capacity nahi mili" in text and silent
+    assert tg.message("no_capacity", "", "7")[0].startswith("⏳ Koshish #7")
 
 
 def test_created_rings_with_ip(monkeypatch):
