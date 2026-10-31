@@ -203,5 +203,23 @@ def main() -> None:
     output(status="no_capacity", public_ip="")
 
 
+def annotate(err: BaseException) -> None:
+    """Surface a readable cause as a GitHub annotation (never secrets)."""
+    if isinstance(err, oci.exceptions.ServiceError):
+        text = f"Oracle API {err.status} {err.code}: {err.message}"
+    else:
+        text = f"{type(err).__name__}: {err}"
+    text = text.replace("\n", " ")[:900]
+    print(f"::error title=Oracle A1 grab failed::{text}", flush=True)
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit as err:
+        if err.code not in (0, None):
+            annotate(RuntimeError(str(err.code)))
+        raise
+    except Exception as err:  # noqa: BLE001 - report then fail the run
+        annotate(err)
+        raise
