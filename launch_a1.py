@@ -48,12 +48,22 @@ def output(**values: str) -> None:
                 f.write(f"{key}={value}\n")
 
 
+def pem_only(text: str) -> str:
+    """Keep just the PEM block; Oracle's download appends an 'OCI_API_KEY' label."""
+    text = text.replace("\\n", "\n").strip()
+    begin, end = text.find("-----BEGIN"), text.rfind("-----END")
+    if begin < 0 or end < 0:
+        sys.exit("OCI_PRIVATE_KEY is not a PEM private key")
+    end = text.find("-----", end + 8) + 5
+    return text[begin:end] + "\n"
+
+
 def config() -> dict:
     cfg = {
-        "user": env("OCI_USER_OCID"),
-        "tenancy": env("OCI_TENANCY_OCID"),
-        "fingerprint": env("OCI_FINGERPRINT"),
-        "key_content": env("OCI_PRIVATE_KEY"),
+        "user": env("OCI_USER_OCID").strip(),
+        "tenancy": env("OCI_TENANCY_OCID").strip(),
+        "fingerprint": env("OCI_FINGERPRINT").strip(),
+        "key_content": pem_only(env("OCI_PRIVATE_KEY")),
         "region": os.environ.get("OCI_REGION") or "ap-mumbai-1",
     }
     oci.config.validate_config(cfg)

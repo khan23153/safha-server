@@ -68,7 +68,7 @@ class FakeVnet:
 def setup(monkeypatch, tmp_path):
     out = tmp_path / "out"
     for k, v in {"OCI_USER_OCID": "u", "OCI_TENANCY_OCID": "t", "OCI_FINGERPRINT": "f",
-                 "OCI_PRIVATE_KEY": "k", "OCI_SSH_PUBLIC_KEY": "ssh-ed25519 AAA", "GITHUB_OUTPUT": str(out)}.items():
+                 "OCI_PRIVATE_KEY": "-----BEGIN PRIVATE KEY-----\nk\n-----END PRIVATE KEY-----\nOCI_API_KEY", "OCI_SSH_PUBLIC_KEY": "ssh-ed25519 AAA", "GITHUB_OUTPUT": str(out)}.items():
         monkeypatch.setenv(k, v)
     monkeypatch.setattr(grab.oci.config, "validate_config", lambda cfg: None)
     monkeypatch.setattr(grab.oci, "wait_until", lambda *a, **k: None)
@@ -117,3 +117,9 @@ def test_missing_secrets_do_nothing(monkeypatch, tmp_path):
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
     grab.main()
     assert "status=not_configured" in out.read_text()
+
+
+def test_oracle_label_after_the_key_is_ignored():
+    key = "-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----\nOCI_API_KEY\n"
+    assert grab.pem_only(key) == "-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----\n"
+    assert grab.pem_only("  " + key.replace("\n", "\\n")).startswith("-----BEGIN PRIVATE KEY-----\nABC")
