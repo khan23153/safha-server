@@ -77,13 +77,13 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python launch_a1.py
       - name: Announce the server and stop retrying
-        if: steps.grab.outputs.status == 'created' || steps.grab.outputs.status == 'exists'
+        if: steps.grab.outputs.created == '1' || contains(fromJSON('["created","exists","upgraded"]'), steps.grab.outputs.status)
         env:
           GH_TOKEN: ${{ github.token }}
           IP: ${{ steps.grab.outputs.public_ip }}
           STATUS: ${{ steps.grab.outputs.status }}
         run: |
-          if [ "$STATUS" = "created" ]; then
+          if [ "${{ steps.grab.outputs.created }}" = "1" ]; then
             gh issue create --title "Oracle A1 server ready: $IP" --body "The free Oracle Ampere A1 server **safha-server** was created in ap-mumbai-1.
 
           - Public IP: \`$IP\`
@@ -91,11 +91,11 @@ jobs:
           - Bootstrap log: \`/var/log/safha-bootstrap.log\` (Docker, repo, models; ~10 minutes)
           - Next: \`CLOUDFLARE_TUNNEL_TOKEN=... /opt/safha-server/deploy.sh\`."
           fi
-          gh workflow disable grab-a1.yml
+          case "$STATUS" in created|exists|upgraded) gh workflow disable grab-a1.yml ;; *) echo "still growing the server; loop continues" ;; esac
       # The loop does not depend on GitHub's (unreliable) schedule: a manual
       # run keeps trying for ~5 hours, then starts its successor.
       - name: Keep trying in a new run
-        if: steps.grab.outputs.status == 'no_capacity'
+        if: contains(fromJSON('["no_capacity","created_small","resizing"]'), steps.grab.outputs.status)
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run grab-a1.yml -f loop_attempts=${{ inputs.loop_attempts || '60' }} -f attempt_offset=${{ steps.grab.outputs.attempts || '0' }}

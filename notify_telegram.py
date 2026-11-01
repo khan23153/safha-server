@@ -50,6 +50,15 @@ def message(status=None, ip=None, attempts=None, error=None) -> tuple[str, bool]
         return (f"✅ Safha server ban gaya!\nIP: {ip}\n"
                 f"SSH: ssh -i safha-server-key ubuntu@{ip}\n"
                 "Setup ~10 min mein khud chalega. Bot ab band ho gaya.", False)
+    if status == "created_small":
+        return (f"✅ Safha server ban gaya (abhi 1 OCPU / 6 GB)!\nIP: {ip}\n"
+                f"SSH: ssh -i safha-server-key ubuntu@{ip}\n"
+                "Setup ~10 min mein khud chalega. Ab har 5 min 2 OCPU / 12 GB karne ki koshish hogi.", False)
+    if status == "resizing":
+        return (f"🔧 Koshish #{attempts}: server ko 2 OCPU / 12 GB karne ke liye Oracle mein abhi jagah nahi. "
+                "Agli koshish ~5 min mein.", True)
+    if status == "upgraded":
+        return f"🚀 Server ab 2 OCPU / 12 GB ka ho gaya! IP: {ip}\nBot ab band ho gaya.", False
     if status == "exists":
         return f"ℹ️ Safha server pehle se bana hua hai. IP: {ip}", True
     if status == "no_capacity":

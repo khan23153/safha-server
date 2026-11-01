@@ -23,6 +23,7 @@ def ns(**kw):
 class FakeCompute:
     def __init__(self, existing=None, errors=()):
         self.existing, self.errors, self.launched = existing, list(errors), []
+        self.resize_errors, self.resized = [], []
 
     def list_instances(self, *a, **k):
         return ns(data=[self.existing] if self.existing else [], has_next_page=False, next_page=None)
@@ -35,6 +36,12 @@ class FakeCompute:
             raise self.errors.pop(0)
         self.launched.append(details)
         return ns(data=ns(id="inst-1"))
+
+    def update_instance(self, _id, details):
+        if self.resize_errors:
+            raise self.resize_errors.pop(0)
+        self.resized.append(details)
+        return ns(data=ns(id=_id))
 
     def get_instance(self, _id):
         return ns(data=ns(lifecycle_state="RUNNING"))
@@ -82,6 +89,7 @@ def setup(monkeypatch, tmp_path):
         grab.main()
         result = dict(line.split("=", 1) for line in out.read_text().split())
         result.pop("attempts", None)
+        result.pop("created", None)
         return result
     return run
 
@@ -123,7 +131,7 @@ def test_missing_secrets_do_nothing(monkeypatch, tmp_path):
 
 def test_several_attempts_per_run_stop_at_success(setup, monkeypatch):
     monkeypatch.setenv("ATTEMPTS", "3")
-    compute = FakeCompute(errors=[Err(500, "Out of host capacity.")])
+    compute = FakeCompute(errors=[Err(500, "Out of host capacity.")] * 2)
     assert setup(compute)["status"] == "created"
     assert len(compute.launched) == 1
 
@@ -136,8 +144,8 @@ def test_oracle_label_after_the_key_is_ignored():
 
 def test_a_transient_error_does_not_end_a_long_loop(setup, monkeypatch):
     monkeypatch.setenv("ATTEMPTS", "3")
-    compute = FakeCompute(errors=[Err(502, "Bad Gateway"), Err(500, "Out of host capacity.")])
-    assert setup(compute)["status"] == "created"
+    compute = FakeCompute(errors=[Err(502, "Bad Gateway"), Err(500, "Out of host capacity.")] * 1 + [Err(500, "Out of host capacity.")])
+    assert setup(compute)["status"] in ("created", "created_small")
 
 
 def test_three_errors_in_a_row_stop_the_loop(setup, monkeypatch):
@@ -148,7 +156,7 @@ def test_three_errors_in_a_row_stop_the_loop(setup, monkeypatch):
 
 def test_smaller_server_is_tried_when_the_big_one_has_no_room(setup):
     compute = FakeCompute(errors=[Err(500, "Out of host capacity.")])
-    assert setup(compute)["status"] == "created"
+    assert setup(compute)["status"] == "created_small"
     d = compute.launched[0]
     assert (d.shape_config.ocpus, d.shape_config.memory_in_gbs) == (1, 6)
 
@@ -169,3 +177,43 @@ def test_attempt_count_continues_across_runs(setup, monkeypatch, tmp_path):
     grab.main()
     assert sent == [121, 122]
     assert "attempts=122" in out.read_text()
+
+
+def small_server():
+    return ns(id="inst-0", lifecycle_state="RUNNING", shape_config=ns(ocpus=1.0, memory_in_gbs=6.0))
+
+
+def test_small_server_is_grown_when_oracle_has_room(setup):
+    compute = FakeCompute(existing=small_server())
+    assert setup(compute)["status"] == "upgraded"
+    c = compute.resized[0].shape_config
+    assert (c.ocpus, c.memory_in_gbs) == (2, 12)
+    assert not compute.launched
+
+
+def test_small_server_waits_for_room_to_grow(setup):
+    compute = FakeCompute(existing=small_server())
+    compute.resize_errors = [Err(500, "Out of host capacity.")]
+    assert setup(compute) == {"status": "resizing", "public_ip": "203.0.113.7"}
+
+
+def test_full_size_server_is_left_alone(setup):
+    compute = FakeCompute(existing=ns(id="inst-0", lifecycle_state="RUNNING", shape_config=ns(ocpus=2.0, memory_in_gbs=12.0)))
+    assert setup(compute)["status"] == "exists"
+    assert not compute.resized
+
+
+def test_after_a_small_server_the_loop_keeps_growing_it(setup, monkeypatch, tmp_path):
+    monkeypatch.setenv("ATTEMPTS", "3")
+    compute = FakeCompute(errors=[Err(500, "Out of host capacity.")])
+    real_launch = compute.launch_instance
+    def launch(details):
+        r = real_launch(details)
+        compute.existing = ns(id="inst-1", lifecycle_state="RUNNING", shape_config=details.shape_config)
+        return r
+    compute.launch_instance = launch
+    compute.resize_errors = [Err(500, "Out of host capacity.")]
+    monkeypatch.setattr(grab.oci.core, "ComputeClient", lambda cfg: compute)
+    grab.main()
+    out = (tmp_path / "out").read_text()
+    assert "status=upgraded" in out and "created=1" in out

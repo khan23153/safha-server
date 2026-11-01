@@ -15,7 +15,11 @@ Configuration comes from environment variables (GitHub secrets):
   easier to get and can be resized later), BOOT_GB (default 100),
   ATTEMPT_OFFSET (attempts made by earlier runs, so the count keeps going).
 
-Outputs (GITHUB_OUTPUT): status=exists|created|no_capacity, public_ip=...
+Outputs (GITHUB_OUTPUT): status=created|created_small|resizing|upgraded|exists|no_capacity,
+public_ip=..., created=1 when this run made the server.
+
+If only the smaller size was free, later attempts keep trying to resize the
+server up to the first (target) size; the server reboots once when that works.
 """
 from __future__ import annotations
 
@@ -164,7 +168,7 @@ def main() -> None:
     attempts = max(1, int(os.environ.get("ATTEMPTS") or 1))
     gap = float(os.environ.get("ATTEMPT_GAP_S") or 300)
     first = int(os.environ.get("ATTEMPT_OFFSET") or 0)
-    status, ip, errors = "no_capacity", "", 0
+    status, ip, errors, made = "no_capacity", "", 0, False
     for n in range(1, attempts + 1):
         try:
             status, ip = attempt()
@@ -180,11 +184,12 @@ def main() -> None:
         else:
             print(f"attempt {n}/{attempts}: {status}", flush=True)
             notify(status, ip, first + n)
-            if status != "no_capacity":
+            made = made or status in ("created", "created_small")
+            if status not in KEEP_GOING:
                 break
         if n < attempts:
             time.sleep(gap)
-    output(status=status, public_ip=ip, attempts=str(first + n))
+    output(status=status, public_ip=ip, attempts=str(first + n), created="1" if made else "0")
 
 
 def notify(status, ip, number, error=None) -> None:
@@ -208,7 +213,7 @@ def attempt() -> tuple[str, str]:
 
     found = existing_instance(compute, compartment)
     if found:
-        return "exists", public_ip(compute, vnet, compartment, found.id)
+        return resize_if_small(compute, vnet, compartment, found)
 
     subnet_id = ensure_network(vnet, compartment)
     image_id = ubuntu_image(compute, compartment)
@@ -242,8 +247,36 @@ def attempt() -> tuple[str, str]:
             print("launched", inst.id, "in", ad.name, f"({ocpus:g} OCPU, {memory:g} GB)")
             oci.wait_until(compute, compute.get_instance(inst.id), "lifecycle_state", "RUNNING",
                            max_wait_seconds=900)
-            return "created", public_ip(compute, vnet, compartment, inst.id)
+            full = (ocpus, memory) == shapes()[0]
+            return ("created" if full else "created_small"), public_ip(compute, vnet, compartment, inst.id)
     return "no_capacity", ""
+
+
+KEEP_GOING = ("no_capacity", "created_small", "resizing")
+
+
+def resize_if_small(compute, vnet, compartment, inst) -> tuple[str, str]:
+    """Server exists. Grow it to the target size when it is smaller and Oracle has room."""
+    ip = public_ip(compute, vnet, compartment, inst.id)
+    ocpus, memory = shapes()[0]
+    cfg = getattr(inst, "shape_config", None)
+    have = (float(getattr(cfg, "ocpus", ocpus) or ocpus), float(getattr(cfg, "memory_in_gbs", memory) or memory))
+    if have[0] >= ocpus and have[1] >= memory:
+        return "exists", ip
+    if inst.lifecycle_state != "RUNNING":
+        print(f"server is {inst.lifecycle_state}; resize later")
+        return "resizing", ip
+    try:
+        compute.update_instance(inst.id, oci.core.models.UpdateInstanceDetails(
+            shape_config=oci.core.models.UpdateInstanceShapeConfigDetails(ocpus=ocpus, memory_in_gbs=memory)))
+    except oci.exceptions.ServiceError as err:
+        if is_capacity_error(err):
+            print(f"resize to {ocpus:g} OCPU/{memory:g} GB: no capacity yet ({err.status} {err.message})")
+            return "resizing", ip
+        raise
+    print(f"resizing {have[0]:g}/{have[1]:g} -> {ocpus:g} OCPU/{memory:g} GB (one reboot)")
+    oci.wait_until(compute, compute.get_instance(inst.id), "lifecycle_state", "RUNNING", max_wait_seconds=900)
+    return "upgraded", public_ip(compute, vnet, compartment, inst.id)
 
 
 def shapes() -> list[tuple[float, float]]:
