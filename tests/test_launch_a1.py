@@ -87,7 +87,7 @@ def setup(monkeypatch, tmp_path):
 
 
 def test_out_of_capacity_is_a_quiet_retry(setup):
-    compute = FakeCompute(errors=[Err(500, "Out of host capacity.")])
+    compute = FakeCompute(errors=[Err(500, "Out of host capacity.")] * 2)
     assert setup(compute) == {"status": "no_capacity", "public_ip": ""}
     assert not compute.launched
 
@@ -144,3 +144,28 @@ def test_three_errors_in_a_row_stop_the_loop(setup, monkeypatch):
     monkeypatch.setenv("ATTEMPTS", "5")
     with pytest.raises(oci.exceptions.ServiceError):
         setup(FakeCompute(errors=[Err(401, "NotAuthenticated")] * 3))
+
+
+def test_smaller_server_is_tried_when_the_big_one_has_no_room(setup):
+    compute = FakeCompute(errors=[Err(500, "Out of host capacity.")])
+    assert setup(compute)["status"] == "created"
+    d = compute.launched[0]
+    assert (d.shape_config.ocpus, d.shape_config.memory_in_gbs) == (1, 6)
+
+
+def test_rate_limit_waits_for_the_next_attempt(setup):
+    compute = FakeCompute(errors=[Err(429, "Too many requests for the user")])
+    assert setup(compute) == {"status": "no_capacity", "public_ip": ""}
+    assert not compute.launched and not compute.errors
+
+
+def test_attempt_count_continues_across_runs(setup, monkeypatch, tmp_path):
+    monkeypatch.setenv("ATTEMPT_OFFSET", "120")
+    monkeypatch.setenv("ATTEMPTS", "2")
+    sent = []
+    monkeypatch.setattr(grab, "notify", lambda status, ip, number, error=None: sent.append(number))
+    out = tmp_path / "out"
+    monkeypatch.setattr(grab.oci.core, "ComputeClient", lambda cfg: FakeCompute(errors=[Err(500, "Out of host capacity.")] * 4))
+    grab.main()
+    assert sent == [121, 122]
+    assert "attempts=122" in out.read_text()

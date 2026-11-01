@@ -11,7 +11,9 @@ Configuration comes from environment variables (GitHub secrets):
   OCI_USER_OCID, OCI_TENANCY_OCID, OCI_FINGERPRINT, OCI_PRIVATE_KEY,
   OCI_REGION (default ap-mumbai-1), OCI_SSH_PUBLIC_KEY,
   optional KAGGLE_API_TOKEN (lets the server download the private models),
-  A1_OCPUS (default 2), A1_MEMORY_GB (default 12), BOOT_GB (default 100).
+  A1_SHAPES (default "2:12,1:6": OCPUs:GB tried in order, the smaller size is
+  easier to get and can be resized later), BOOT_GB (default 100),
+  ATTEMPT_OFFSET (attempts made by earlier runs, so the count keeps going).
 
 Outputs (GITHUB_OUTPUT): status=exists|created|no_capacity, public_ip=...
 """
@@ -210,35 +212,47 @@ def attempt() -> tuple[str, str]:
 
     subnet_id = ensure_network(vnet, compartment)
     image_id = ubuntu_image(compute, compartment)
-    ocpus = float(os.environ.get("A1_OCPUS") or 2)
-    memory = float(os.environ.get("A1_MEMORY_GB") or 12)
     boot = int(os.environ.get("BOOT_GB") or 100)
     ssh_key = env("OCI_SSH_PUBLIC_KEY")
 
     for ad in identity.list_availability_domains(compartment).data:
-        details = oci.core.models.LaunchInstanceDetails(
-            availability_domain=ad.name, compartment_id=compartment, display_name=NAME,
-            shape=SHAPE,
-            shape_config=oci.core.models.LaunchInstanceShapeConfigDetails(
-                ocpus=ocpus, memory_in_gbs=memory),
-            source_details=oci.core.models.InstanceSourceViaImageDetails(
-                image_id=image_id, boot_volume_size_in_gbs=boot),
-            create_vnic_details=oci.core.models.CreateVnicDetails(
-                subnet_id=subnet_id, assign_public_ip=True),
-            metadata={"ssh_authorized_keys": ssh_key, "user_data": cloud_init()},
-        )
-        try:
-            inst = compute.launch_instance(details).data
-        except oci.exceptions.ServiceError as err:
-            if is_capacity_error(err):
-                print(f"{ad.name}: no capacity yet ({err.status} {err.message})")
-                continue
-            raise
-        print("launched", inst.id, "in", ad.name)
-        oci.wait_until(compute, compute.get_instance(inst.id), "lifecycle_state", "RUNNING",
-                       max_wait_seconds=900)
-        return "created", public_ip(compute, vnet, compartment, inst.id)
+        for ocpus, memory in shapes():
+            details = oci.core.models.LaunchInstanceDetails(
+                availability_domain=ad.name, compartment_id=compartment, display_name=NAME,
+                shape=SHAPE,
+                shape_config=oci.core.models.LaunchInstanceShapeConfigDetails(
+                    ocpus=ocpus, memory_in_gbs=memory),
+                source_details=oci.core.models.InstanceSourceViaImageDetails(
+                    image_id=image_id, boot_volume_size_in_gbs=boot),
+                create_vnic_details=oci.core.models.CreateVnicDetails(
+                    subnet_id=subnet_id, assign_public_ip=True),
+                metadata={"ssh_authorized_keys": ssh_key, "user_data": cloud_init()},
+            )
+            try:
+                inst = compute.launch_instance(details).data
+            except oci.exceptions.ServiceError as err:
+                if err.status == 429:
+                    # Oracle is rate-limiting us: asking again right away only makes it worse.
+                    print(f"{ad.name}: rate limited by Oracle (429); next try in the next attempt")
+                    return "no_capacity", ""
+                if is_capacity_error(err):
+                    print(f"{ad.name} {ocpus:g} OCPU/{memory:g} GB: no capacity yet ({err.status} {err.message})")
+                    continue
+                raise
+            print("launched", inst.id, "in", ad.name, f"({ocpus:g} OCPU, {memory:g} GB)")
+            oci.wait_until(compute, compute.get_instance(inst.id), "lifecycle_state", "RUNNING",
+                           max_wait_seconds=900)
+            return "created", public_ip(compute, vnet, compartment, inst.id)
     return "no_capacity", ""
+
+
+def shapes() -> list[tuple[float, float]]:
+    """(OCPUs, GB) sizes to try, largest first; all fit Oracle's free A1 allowance."""
+    out = []
+    for part in (os.environ.get("A1_SHAPES") or "2:12,1:6").split(","):
+        ocpus, memory = part.strip().split(":")
+        out.append((float(ocpus), float(memory)))
+    return out
 
 
 def describe(err: BaseException) -> str:
