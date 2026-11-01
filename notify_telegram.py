@@ -53,7 +53,7 @@ def message(status=None, ip=None, attempts=None, error=None) -> tuple[str, bool]
     if status == "exists":
         return f"ℹ️ Safha server pehle se bana hua hai. IP: {ip}", True
     if status == "no_capacity":
-        return (f"⏳ Koshish #{attempts} (run #{run}): Mumbai mein capacity nahi mili. "
+        return (f"⏳ Koshish #{attempts}: Mumbai mein abhi server khaali nahi. "
                 "Agli koshish ~5 min mein.", True)
     if status == "not_configured":
         return "", True
