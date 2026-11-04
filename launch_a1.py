@@ -220,8 +220,13 @@ def attempt() -> tuple[str, str]:
     boot = int(os.environ.get("BOOT_GB") or 100)
     ssh_key = env("OCI_SSH_PUBLIC_KEY")
 
+    shape_gap = float(os.environ.get("SHAPE_GAP_S") or 30)
     for ad in identity.list_availability_domains(compartment).data:
-        for ocpus, memory in shapes():
+        for k, (ocpus, memory) in enumerate(shapes()):
+            if k:
+                # Back-to-back launch requests trip Oracle's rate limit (429), so the
+                # smaller-shape fallback almost never got a real answer. Pause first.
+                time.sleep(shape_gap)
             details = oci.core.models.LaunchInstanceDetails(
                 availability_domain=ad.name, compartment_id=compartment, display_name=NAME,
                 shape=SHAPE,
@@ -238,7 +243,7 @@ def attempt() -> tuple[str, str]:
             except oci.exceptions.ServiceError as err:
                 if err.status == 429:
                     # Oracle is rate-limiting us: asking again right away only makes it worse.
-                    print(f"{ad.name}: rate limited by Oracle (429); next try in the next attempt")
+                    print(f"{ad.name} {ocpus:g} OCPU/{memory:g} GB: rate limited by Oracle (429); next try in the next attempt")
                     return "no_capacity", ""
                 if is_capacity_error(err):
                     print(f"{ad.name} {ocpus:g} OCPU/{memory:g} GB: no capacity yet ({err.status} {err.message})")

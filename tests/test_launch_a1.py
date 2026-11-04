@@ -217,3 +217,13 @@ def test_after_a_small_server_the_loop_keeps_growing_it(setup, monkeypatch, tmp_
     grab.main()
     out = (tmp_path / "out").read_text()
     assert "status=upgraded" in out and "created=1" in out
+
+
+def test_fallback_shape_waits_before_asking_again(setup, monkeypatch):
+    """Two launch requests back to back get a 429; the smaller shape is asked after a pause."""
+    pauses = []
+    monkeypatch.setattr(grab.time, "sleep", lambda s: pauses.append(s))
+    monkeypatch.setenv("SHAPE_GAP_S", "30")
+    compute = FakeCompute(errors=[Err(500, "Out of host capacity.")])
+    assert setup(compute)["status"] == "created_small"
+    assert pauses[:1] == [30.0]

@@ -72,6 +72,7 @@ jobs:
           ATTEMPTS: ${{ inputs.loop_attempts || '60' }}
           ATTEMPT_OFFSET: ${{ inputs.attempt_offset || '0' }}
           ATTEMPT_GAP_S: "300"
+          SHAPE_GAP_S: "30"
           NOTIFY_EACH: "1"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
