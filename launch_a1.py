@@ -171,7 +171,7 @@ def main() -> None:
     status, ip, errors, made = "no_capacity", "", 0, False
     for n in range(1, attempts + 1):
         try:
-            status, ip = attempt()
+            status, ip = attempt(first + n)
             errors = 0
         except Exception as err:  # noqa: BLE001 - keep a long loop alive
             errors += 1
@@ -203,8 +203,15 @@ def notify(status, ip, number, error=None) -> None:
         print(f"::warning title=Telegram::{type(err).__name__}")
 
 
-def attempt() -> tuple[str, str]:
-    """One try. Returns (status, public_ip)."""
+def attempt(number: int = 1) -> tuple[str, str]:
+    """One try. Returns (status, public_ip).
+
+    Oracle rate-limits LaunchInstance hard: a second launch request in the same
+    attempt came back 429 in 56 of 60 attempts even after a 30 s pause. So by
+    default each attempt sends ONE launch request and the sizes take turns
+    (attempt 1: largest, attempt 2: next, ...). SHAPES_PER_ATTEMPT=all restores
+    trying every size in one attempt.
+    """
     cfg = config()
     compartment = cfg["tenancy"]
     compute = oci.core.ComputeClient(cfg)
@@ -221,8 +228,11 @@ def attempt() -> tuple[str, str]:
     ssh_key = env("OCI_SSH_PUBLIC_KEY")
 
     shape_gap = float(os.environ.get("SHAPE_GAP_S") or 30)
+    order = shapes()
+    if (os.environ.get("SHAPES_PER_ATTEMPT") or "1").strip().lower() != "all":
+        order = [order[(max(1, number) - 1) % len(order)]]
     for ad in identity.list_availability_domains(compartment).data:
-        for k, (ocpus, memory) in enumerate(shapes()):
+        for k, (ocpus, memory) in enumerate(order):
             if k:
                 # Back-to-back launch requests trip Oracle's rate limit (429), so the
                 # smaller-shape fallback almost never got a real answer. Pause first.

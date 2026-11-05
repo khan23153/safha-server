@@ -144,6 +144,7 @@ def test_oracle_label_after_the_key_is_ignored():
 
 def test_a_transient_error_does_not_end_a_long_loop(setup, monkeypatch):
     monkeypatch.setenv("ATTEMPTS", "3")
+    monkeypatch.setenv("SHAPES_PER_ATTEMPT", "all")
     compute = FakeCompute(errors=[Err(502, "Bad Gateway"), Err(500, "Out of host capacity.")] * 1 + [Err(500, "Out of host capacity.")])
     assert setup(compute)["status"] in ("created", "created_small")
 
@@ -154,7 +155,8 @@ def test_three_errors_in_a_row_stop_the_loop(setup, monkeypatch):
         setup(FakeCompute(errors=[Err(401, "NotAuthenticated")] * 3))
 
 
-def test_smaller_server_is_tried_when_the_big_one_has_no_room(setup):
+def test_smaller_server_is_tried_when_the_big_one_has_no_room(setup, monkeypatch):
+    monkeypatch.setenv("SHAPES_PER_ATTEMPT", "all")
     compute = FakeCompute(errors=[Err(500, "Out of host capacity.")])
     assert setup(compute)["status"] == "created_small"
     d = compute.launched[0]
@@ -205,6 +207,7 @@ def test_full_size_server_is_left_alone(setup):
 
 def test_after_a_small_server_the_loop_keeps_growing_it(setup, monkeypatch, tmp_path):
     monkeypatch.setenv("ATTEMPTS", "3")
+    monkeypatch.setenv("SHAPES_PER_ATTEMPT", "all")
     compute = FakeCompute(errors=[Err(500, "Out of host capacity.")])
     real_launch = compute.launch_instance
     def launch(details):
@@ -224,6 +227,17 @@ def test_fallback_shape_waits_before_asking_again(setup, monkeypatch):
     pauses = []
     monkeypatch.setattr(grab.time, "sleep", lambda s: pauses.append(s))
     monkeypatch.setenv("SHAPE_GAP_S", "30")
+    monkeypatch.setenv("SHAPES_PER_ATTEMPT", "all")
     compute = FakeCompute(errors=[Err(500, "Out of host capacity.")])
     assert setup(compute)["status"] == "created_small"
     assert pauses[:1] == [30.0]
+
+
+def test_sizes_take_turns_one_launch_request_per_attempt(setup, monkeypatch):
+    """Default: attempt 1 asks for the big server only, attempt 2 for the small one only."""
+    monkeypatch.setenv("ATTEMPTS", "2")
+    compute = FakeCompute(errors=[Err(500, "Out of host capacity.")])
+    assert setup(compute)["status"] == "created_small"
+    d = compute.launched[0]
+    assert (d.shape_config.ocpus, d.shape_config.memory_in_gbs) == (1, 6)
+    assert not compute.errors  # exactly one failed big request before the small one
