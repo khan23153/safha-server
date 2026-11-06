@@ -22,4 +22,20 @@ This repo keeps trying automatically, then sets the server up.
 3. Wait for the "Oracle A1 server ready" issue. Then on the server:
    `CLOUDFLARE_TUNNEL_TOKEN=... /opt/safha-server/deploy.sh`
 
+## Run it on your own VPS instead
+
+When GitHub Actions is unavailable, the same script can run as a service on any Linux VPS (keep the GitHub workflow disabled meanwhile: two grabbers at once get "429 Too many requests").
+
+```bash
+sudo git clone https://github.com/khan23153/safha-server /opt/safha-server
+sudo bash /opt/safha-server/vps/install.sh     # writes /etc/safha-grabber/grabber.env
+sudo nano /etc/safha-grabber/grabber.env       # your OCIDs + fingerprint (+ Telegram)
+# copy your Oracle API private key to /etc/safha-grabber/oci_api_key.pem
+# and the server's SSH public key to   /etc/safha-grabber/ssh.pub
+sudo bash /opt/safha-server/vps/install.sh     # starts it
+journalctl -u safha-grabber -f                 # watch
+```
+
+It tries once every 5 minutes and stops by itself once the server exists (Telegram rings when it is created). Stop it any time: `sudo systemctl disable --now safha-grabber`.
+
 Run the tests: `pip install oci pytest && pytest tests`.

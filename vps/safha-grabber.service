@@ -1,0 +1,17 @@
+[Unit]
+Description=Grab the free Oracle A1 server for Safha
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+EnvironmentFile=/etc/safha-grabber/grabber.env
+ExecStart=__REPO__/.venv/bin/python -u launch_a1.py
+# Exits 0 once the server exists (then stays stopped). Three errors in a row
+# exit non-zero: wait 10 minutes and start again.
+Restart=on-failure
+RestartSec=600
+
+[Install]
+WantedBy=multi-user.target

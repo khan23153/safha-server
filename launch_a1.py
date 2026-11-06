@@ -64,12 +64,20 @@ def pem_only(text: str) -> str:
     return text[begin:end] + "\n"
 
 
+def env_or_file(name: str) -> str:
+    """NAME, or the contents of the file NAME_FILE points to (handy on a VPS)."""
+    path = os.environ.get(f"{name}_FILE")
+    if path and not os.environ.get(name):
+        return Path(path).expanduser().read_text()
+    return env(name)
+
+
 def config() -> dict:
     cfg = {
         "user": env("OCI_USER_OCID").strip(),
         "tenancy": env("OCI_TENANCY_OCID").strip(),
         "fingerprint": env("OCI_FINGERPRINT").strip(),
-        "key_content": pem_only(env("OCI_PRIVATE_KEY")),
+        "key_content": pem_only(env_or_file("OCI_PRIVATE_KEY")),
         "region": os.environ.get("OCI_REGION") or "ap-mumbai-1",
     }
     oci.config.validate_config(cfg)
@@ -225,7 +233,7 @@ def attempt(number: int = 1) -> tuple[str, str]:
     subnet_id = ensure_network(vnet, compartment)
     image_id = ubuntu_image(compute, compartment)
     boot = int(os.environ.get("BOOT_GB") or 100)
-    ssh_key = env("OCI_SSH_PUBLIC_KEY")
+    ssh_key = env_or_file("OCI_SSH_PUBLIC_KEY").strip()
 
     shape_gap = float(os.environ.get("SHAPE_GAP_S") or 30)
     order = shapes()

@@ -241,3 +241,13 @@ def test_sizes_take_turns_one_launch_request_per_attempt(setup, monkeypatch):
     d = compute.launched[0]
     assert (d.shape_config.ocpus, d.shape_config.memory_in_gbs) == (1, 6)
     assert not compute.errors  # exactly one failed big request before the small one
+
+
+def test_keys_can_come_from_files(monkeypatch, tmp_path):
+    key = tmp_path / "oci.pem"
+    key.write_text("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\nOCI_API_KEY\n")
+    monkeypatch.delenv("OCI_PRIVATE_KEY", raising=False)
+    monkeypatch.setenv("OCI_PRIVATE_KEY_FILE", str(key))
+    assert grab.pem_only(grab.env_or_file("OCI_PRIVATE_KEY")).endswith("-----END PRIVATE KEY-----\n")
+    monkeypatch.setenv("OCI_PRIVATE_KEY", "inline wins")
+    assert grab.env_or_file("OCI_PRIVATE_KEY") == "inline wins"
